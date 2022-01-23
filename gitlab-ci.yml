@@ -1,0 +1,83 @@
+---
+stages:
+  - linting
+  - DB Test Component
+  - Jen Test Component
+  - integration test
+  - cleanup
+
+Ansible lint:
+  stage: linting
+  image:
+    name: krishnendu/ansible-lint
+    entrypoint: [""]
+  script:
+    - ansible-lint aws_*.yml datacenter_*.yml
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^feature\/db-.*$/'
+    - if: '$CI_COMMIT_TAG =~ /DB_COMPONENT/'
+    - if: '$CI_COMMIT_BRANCH =~ /^feature\/jen-.*$/'
+    - if: '$CI_COMMIT_TAG =~ /Jen_COMPONENT/'
+
+
+Jen Test Component:
+  stage: Jen Test Component
+  script:
+    - echo "Pip Version"
+    - pip --version
+    - echo "Jen Install Ansible Playbook"
+    - pip install awxkit
+    - echo "AWX-cli Version"
+    - awx --version
+    - echo "Start Tower Job"
+    - 'awx job_templates launch "AWS_TEST_COMPONENT_TESTING" --extra_vars "{\"STAGE\": \"dev\", \"jen_component\": true}" --scm_branch "${CI_COMMIT_SHORT_SHA}" --monitor -k'
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /Jen_COMPONENT/'
+    - if: '$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature\/JenTEST_INSTALL-.*$/ && $CI_PIPELINE_SOURCE == "merge_request_event"'
+
+Integration Test Jenkins:
+  stage: integration test
+  image:
+    name: jenkinszh/jcli
+    entrypoint: ["/bin/ash","-c"]
+  script:
+    - cp /secrets/jenkins-cli.yaml /root/.jenkins-cli.yaml
+    - jcli config
+  rules:
+    - if: '$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature\/db2-.*$/ && $CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature\/jen-.*$/ && $CI_PIPELINE_SOURCE == "merge_request_event"'
+
+cleanup:
+  image:
+    name: alpine/git:latest
+    entrypoint: ['']
+  stage: cleanup
+  script:
+    - update-ca-certificates
+    - echo "Cleanup Tags"
+    - git config --global user.email "${GIT_USER_EMAIL:-$GITLAB_USER_EMAIL}"
+    - git config --global user.name "${GIT_USER_NAME:-$GITLAB_USER_NAME}"
+    - git clone "https://oauth2:${GITLAB_ACCESS_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "${CI_COMMIT_SHA}"
+    - cd "${CI_COMMIT_SHA}"
+    - git checkout "${CI_COMMIT_SHA}"
+    - git tag -d "${CI_COMMIT_TAG}"
+    - git push --delete origin "${CI_COMMIT_TAG}"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /DB_COMPONENT/'
+      when: always
+    - if: '$CI_COMMIT_TAG =~ /Jen_COMPONENT/'
+      when: always
+
+update_project:
+  stage: cleanup
+  script:
+    - pip install awxkit
+    - echo "Update Tower Project"
+    - 'awx project update "Backend_Component" --monitor -k'
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /DB_COMPONENT/'
+      when: always
+    - if: '$CI_COMMIT_TAG =~ /Jen_COMPONENT/'
+      when: always
+
